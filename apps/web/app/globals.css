@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #F8FAFC;
+  --foreground: #111827;
+  --surface: #FFFFFF;
+  --border: #E5E7EB;
+  --sidebar: #0B1220;
+  --accent: #2563EB;
+}
+
+body {
+  color: #111827;
+  background: #F8FAFC;
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

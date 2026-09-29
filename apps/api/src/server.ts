@@ -1,0 +1,76 @@
+import { app } from './app';
+import { config } from './config';
+import { logger } from './lib/logger';
+import { closeDb } from './lib/db';
+import { closeRedis } from './lib/redis';
+import { emailQueue } from './queues/email.queue';
+import { emailIndexQueue } from './queues/email-index.queue';
+import { closeRedisConnection } from './queues/redis';
+import { SmtpTransportManager } from './services/smtp';
+import { closeElasticsearchClient } from './services/search';
+import { createEmailWorker } from './workers/email.worker';
+import { createEmailIndexWorker } from './workers/email-index.worker';
+import { EtherealEmailTransport } from './services/smtp/ethereal.transport';
+
+const etherealTransport = new EtherealEmailTransport();
+const emailWorker = createEmailWorker({
+  transport: etherealTransport,
+  minimumDelayMs: config.MIN_EMAIL_DELAY_MS,
+  hourlyLimit: config.MAX_EMAILS_PER_HOUR,
+  concurrency: config.WORKER_CONCURRENCY,
+});
+const emailIndexWorker = createEmailIndexWorker();
+
+const server = app.listen(config.API_PORT, config.API_HOST, () => {
+  logger.info(`ReachInbox API server running`, {
+    host: config.API_HOST,
+    port: config.API_PORT,
+    environment: config.NODE_ENV,
+    url: `http://${config.API_HOST === '0.0.0.0' ? 'localhost' : config.API_HOST}:${config.API_PORT}`,
+  });
+  logger.info('Email worker and index worker active in background');
+});
+
+async function gracefulShutdown(signal: string): Promise<void> {
+  logger.info(`Received ${signal}. Starting graceful shutdown...`);
+
+  server.close(async (err) => {
+    if (err) {
+      logger.error('Error during HTTP server close', { error: err.message });
+      process.exit(1);
+    }
+
+    try {
+      await Promise.allSettled([
+        emailWorker.close(),
+        emailIndexWorker.close(),
+        etherealTransport.close(),
+        emailQueue.close(),
+        emailIndexQueue.close(),
+        closeElasticsearchClient(),
+        SmtpTransportManager.closeAll(),
+        closeDb(),
+        closeRedis(),
+        closeRedisConnection(),
+      ]);
+      logger.info('Queues, Elasticsearch client, SMTP pools, database, and Redis connections closed successfully');
+      process.exit(0);
+    } catch (cleanupError) {
+      logger.error('Error during cleanup', {
+        error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+      });
+      process.exit(1);
+    }
+  });
+
+  // Force close after 10s timeout
+  setTimeout(() => {
+    logger.error('Forced shutdown due to timeout');
+    process.exit(1);
+  }, 10000).unref();
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+export default server;
